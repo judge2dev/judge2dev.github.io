@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PromptPay QR Generator</title>
+<style>
+:root{--green:#087f5b;--dark:#12352b;--muted:#66756f;--line:#dce8e2;--bg:#f3f8f5}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--dark);padding:28px 16px}
+main{max-width:900px;margin:auto}.head{text-align:center;margin-bottom:24px}.head h1{margin:0 0 8px;font-size:clamp(24px,4vw,34px)}.head p{margin:0;color:var(--muted)}
+.panel{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 10px 30px #163b2a0b}
+.layout{display:grid;grid-template-columns:1fr 1fr;gap:20px}.field{margin-bottom:17px}label{display:block;font-weight:650;margin-bottom:7px}input,select{width:100%;padding:13px 14px;border:1px solid #cbd9d1;border-radius:10px;font-size:16px;background:#fff;color:var(--dark)}input:focus,select:focus{outline:3px solid #087f5b22;border-color:var(--green)}.hint{font-size:13px;color:var(--muted);margin-top:6px}
+button{border:0;border-radius:10px;padding:13px 17px;font-size:15px;font-weight:700;cursor:pointer}.primary{background:var(--green);color:white;width:100%}.secondary{background:#e8f3ed;color:var(--green);flex:1}.actions{display:flex;gap:10px;margin-top:14px}
+.result{background:#f8fbf9;border:1px dashed #bdd2c5;border-radius:14px;padding:20px;text-align:center;min-height:310px;display:flex;flex-direction:column;align-items:center;justify-content:center}.result h2{font-size:18px;margin:0 0 14px}.placeholder{color:var(--muted);max-width:260px;line-height:1.6}#qr{background:white;padding:12px;border-radius:12px;display:none}#qr canvas,#qr img{display:block;max-width:100%;height:auto}.amount{font-size:24px;font-weight:800;margin-top:12px}.receiver{font-size:14px;color:var(--muted);margin-top:5px;word-break:break-word}.notice{font-size:13px;color:#7b5b16;background:#fff8e6;border:1px solid #f1dfad;padding:12px 14px;border-radius:10px;margin-top:18px;line-height:1.55}.error{color:#b42318;font-size:14px;margin-top:10px;min-height:20px}
+@media(max-width:700px){.layout{grid-template-columns:1fr}.panel{padding:18px}}
+</style>
+</head>
+<body>
+<main>
+<header class="head"><h1>PromptPay QR Generator</h1><p>สร้าง QR Code สำหรับรับชำระเงินผ่านพร้อมเพย์</p></header>
+<section class="panel layout">
+<div>
+  <div class="field">
+    <label for="type">ประเภทรหัสพร้อมเพย์</label>
+    <select id="type"><option value="phone">เบอร์โทรศัพท์มือถือ</option><option value="national">เลขบัตรประชาชน / เลขผู้เสียภาษี</option><option value="ewallet">เลข e-Wallet 15 หลัก</option></select>
+  </div>
+  <div class="field">
+    <label for="receiver">หมายเลขพร้อมเพย์</label>
+    <input id="receiver" inputmode="numeric" autocomplete="off" placeholder="เช่น 0812345678">
+    <div class="hint" id="formatHint">กรอกเบอร์โทรศัพท์ 10 หลัก</div>
+  </div>
+  <div class="field">
+    <label for="amount">จำนวนเงิน (บาท) <span style="font-weight:400;color:#718078">— ไม่บังคับ</span></label>
+    <input id="amount" inputmode="decimal" placeholder="เช่น 350.00">
+    <div class="hint">เว้นว่างไว้เพื่อให้ลูกค้าระบุยอดเงินเอง</div>
+  </div>
+  <button class="primary" id="generate">Generate QR Code</button>
+  <div class="error" id="error" role="alert"></div>
+  <div class="notice">ตรวจสอบหมายเลขพร้อมเพย์และชื่อผู้รับที่แสดงในแอปธนาคารก่อนให้ลูกค้าชำระเงินทุกครั้ง QR นี้ไม่ได้ยืนยันการรับเงินหรือใช้ตรวจสอบสลิป</div>
+</div>
+<div>
+  <div class="result">
+    <h2>สแกนเพื่อชำระเงิน</h2>
+    <div class="placeholder" id="placeholder">QR Code จะแสดงที่นี่<br>เมื่อกรอกข้อมูลแล้วกด Generate</div>
+    <div id="qr" aria-label="PromptPay QR Code"></div>
+    <div class="amount" id="amountText"></div>
+    <div class="receiver" id="receiverText"></div>
+  </div>
+  <div class="actions">
+    <button class="secondary" id="download" disabled>ดาวน์โหลด PNG</button>
+    <button class="secondary" id="print" disabled>พิมพ์</button>
+  </div>
+</div>
+</section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let currentPayload='';
+function crc16(str){
+  let crc=0xFFFF;
+  for(let i=0;i<str.length;i++){
+    crc^=str.charCodeAt(i)<<8;
+    for(let j=0;j<8;j++) crc=(crc&0x8000)?((crc<<1)^0x1021):(crc<<1);
+    crc&=0xFFFF;
+  }
+  return crc.toString(16).toUpperCase().padStart(4,'0');
+}
+function tlv(id,value){return id+String(value.length).padStart(2,'0')+value}
+function cleanDigits(v){return v.replace(/\D/g,'')}
+function targetInfo(){
+  const type=$('type').value, raw=cleanDigits($('receiver').value);
+  if(type==='phone'){
+    if(raw.length!==10 || raw[0]!=='0') throw Error('เบอร์โทรศัพท์ต้องเป็นตัวเลข 10 หลักและขึ้นต้นด้วย 0');
+    return {tag:'01',value:'0066'+raw.slice(1)};
+  }
+  if(type==='national'){
+    if(raw.length!==13) throw Error('เลขบัตรประชาชน/เลขผู้เสียภาษีต้องมี 13 หลัก');
+    return {tag:'02',value:raw};
+  }
+  if(raw.length!==15) throw Error('เลข e-Wallet ต้องมี 15 หลัก');
+  return {tag:'03',value:raw};
+}
+function makePayload(){
+  const target=targetInfo();
+  let merchant=tlv('00','A000000677010111')+tlv(target.tag,target.value);
+  let payload=tlv('00','01')+tlv('01',$('amount').value.trim()?'12':'11')+
+    tlv('29',merchant)+tlv('53','764')+tlv('58','TH');
+  const amount=$('amount').value.trim();
+  if(amount){
+    const n=Number(amount.replace(/,/g,''));
+    if(!Number.isFinite(n)||n<=0||! /^\d+(\.\d{1,2})?$/.test(amount.replace(/,/g,''))) throw Error('กรุณากรอกยอดเงินเป็นตัวเลขมากกว่า 0 ไม่เกิน 2 ตำแหน่งทศนิยม');
+    payload+=tlv('54',n.toFixed(2));
+  }
+  payload+='6304';
+  return payload+crc16(payload);
+}
+function render(){
+  $('error').textContent='';
+  try{
+    if(typeof QRCode==='undefined') throw Error('โหลดไลบรารี QR Code ไม่สำเร็จ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่');
+    const payload=makePayload();
+    currentPayload=payload;
+    $('qr').innerHTML='';
+    new QRCode($('qr'),{text:payload,width:256,height:256,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});
+    $('qr').style.display='inline-block';$('placeholder').style.display='none';
+    const amount=$('amount').value.trim();
+    $('amountText').textContent=amount?'฿ '+Number(amount).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}):'ระบุจำนวนเงินเอง';
+    $('receiverText').textContent='PromptPay: '+cleanDigits($('receiver').value);
+    $('download').disabled=false;$('print').disabled=false;
+  }catch(e){$('error').textContent=e.message}
+}
+$('generate').addEventListener('click',render);
+$('type').addEventListener('change',()=>{
+  const t=$('type').value;
+  $('formatHint').textContent=t==='phone'?'กรอกเบอร์โทรศัพท์ 10 หลัก':t==='national'?'กรอกเลข 13 หลัก':'กรอกเลข e-Wallet 15 หลัก';
+  $('receiver').placeholder=t==='phone'?'เช่น 0812345678':t==='national'?'เลข 13 หลัก':'เลข e-Wallet 15 หลัก';
+});
+$('download').addEventListener('click',()=>{
+  const canvas=$('qr').querySelector('canvas');
+  const img=$('qr').querySelector('img');
+  let url=canvas?canvas.toDataURL('image/png'):img?.src;
+  if(!url)return;
+  const a=document.createElement('a');a.href=url;a.download='promptpay-qr.png';a.click();
+});
+$('print').addEventListener('click',()=>{
+  const canvas=$('qr').querySelector('canvas');
+  const img=$('qr').querySelector('img');
+  const src=canvas?canvas.toDataURL('image/png'):img?.src;
+  if(!src)return;
+  const w=window.open('','_blank');
+  w.document.write('<html><head><title>PromptPay QR</title></head><body style="font-family:sans-serif;text-align:center;padding:30px"><h2>สแกนเพื่อชำระเงิน</h2><img style="width:300px" src="'+src+'"><p>'+ $('amountText').textContent+'</p><p>'+ $('receiverText').textContent+'</p></body></html>');
+  w.document.close();w.focus();w.print();
+});
+</script>
+</body>
+</html>
